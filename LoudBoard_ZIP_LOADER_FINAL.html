@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Loud Board</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{margin:0;font-family:system-ui;background:#0f1724;color:#e6eef8;padding:16px}
+h1{text-align:center}
+.controls{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:10px}
+.sound{display:flex;align-items:center;gap:6px;margin:6px 0}
+button,input{background:#111827;color:#e6eef8;border:1px solid #1f2937;border-radius:6px;padding:6px}
+input[type=range]{width:180px}
+input[type=number]{width:90px}
+</style>
+</head>
+<body>
+
+<h1>Loud Board</h1>
+
+<div class="controls">
+  <input type="file" id="zipInput" accept=".zip" multiple>
+  <input id="search" placeholder="Search sounds">
+
+  <!-- SLIDER -->
+  <input type="range" id="volume" min="0" max="15000" value="1000">
+
+  <!-- NUMBER INPUT -->
+  <input type="number" id="volumeNumber" min="0" max="15000" value="1000">
+
+  <button onclick="stopAll()">Stop All</button>
+  <button onclick="restartAll()">Restart All</button>
+  <button onclick="ownerLogin()">Owner</button>
+</div>
+
+<div id="sounds"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+
+<script>
+let owner=false, panic=false
+const ctx=new (window.AudioContext||window.webkitAudioContext)()
+
+const master=ctx.createGain()
+
+// Limiter to prevent distortion
+const limiter=ctx.createDynamicsCompressor()
+limiter.threshold.value=-6
+limiter.knee.value=0
+limiter.ratio.value=20
+limiter.attack.value=0.003
+limiter.release.value=0.1
+
+master.connect(limiter)
+limiter.connect(ctx.destination)
+
+const sounds=[]
+const seenHashes=new Set()
+
+zipInput.onchange=async()=>{
+ ctx.resume()
+ for(const file of zipInput.files){
+  const buf=await file.arrayBuffer()
+  const zip=await JSZip.loadAsync(buf)
+  for(const name in zip.files){
+   if(!name.match(/\.(mp3|wav|ogg)$/i)) continue
+   const data=await zip.files[name].async("arraybuffer")
+   const hash=await crypto.subtle.digest("SHA-1",data)
+   const key=[...new Uint8Array(hash)].join(",")
+   if(seenHashes.has(key)) continue
+   seenHashes.add(key)
+   const blob=new Blob([data])
+   addSound(name.split("/").pop(),URL.createObjectURL(blob))
+  }
+ }
+ render()
+}
+
+function addSound(name,src){
+ const a=new Audio(src)
+ const g=ctx.createGain()
+ const s=ctx.createMediaElementSource(a)
+ s.connect(g).connect(master)
+ sounds.push({name,a,g,loop:false})
+}
+
+function render(){
+ soundsDiv.innerHTML=""
+ sounds
+ .filter(s=>s.name.toLowerCase().includes(search.value.toLowerCase()))
+ .forEach(s=>{
+  const d=document.createElement("div")
+  d.className="sound"
+  d.innerHTML=`
+   <button onclick="play('${s.name}')">▶</button>
+   <button onclick="restart('${s.name}')">↺</button>
+   ${owner?`<button onclick="toggleLoop('${s.name}')">🔁</button>`:""}
+   <span>${s.name}</span>`
+  soundsDiv.appendChild(d)
+ })
+}
+
+function play(n){
+ ctx.resume()
+ const s=sounds.find(x=>x.name===n)
+ s.a.loop=s.loop
+ s.a.play()
+}
+function restart(n){
+ const s=sounds.find(x=>x.name===n)
+ s.a.currentTime=0
+ s.a.play()
+}
+function toggleLoop(n){
+ const s=sounds.find(x=>x.name===n)
+ s.loop=!s.loop
+}
+function stopAll(){
+ sounds.forEach(s=>{s.a.pause();s.a.currentTime=0})
+}
+function restartAll(){
+ sounds.forEach(s=>{s.a.currentTime=0;s.a.play()})
+}
+
+function applyVolume(val){
+ if(panic){
+  master.gain.value=0
+  return
+ }
+ master.gain.value = owner ? val*3 : (val/1000)*3
+}
+
+// Slider → Number
+volume.oninput=()=>{
+ volumeNumber.value=volume.value
+ applyVolume(Number(volume.value))
+}
+
+// Number → Slider
+volumeNumber.oninput=()=>{
+ let max=owner?100000:15000
+ let v=Math.min(Math.max(Number(volumeNumber.value),0),max)
+ volume.value=v
+ volumeNumber.value=v
+ applyVolume(v)
+}
+
+// Panic mute (M key)
+document.addEventListener("keydown",e=>{
+ if(e.key.toLowerCase()==="m"){
+  panic=!panic
+  applyVolume(Number(volume.value))
+ }
+})
+
+function ownerLogin(){
+ if(prompt("Owner password")==="14941494"){
+  owner=true
+  volume.max=100000
+  volumeNumber.max=100000
+  render()
+ }
+}
+
+search.oninput=render
+const soundsDiv=document.getElementById("sounds")
+</script>
+
+</body>
+</html>
